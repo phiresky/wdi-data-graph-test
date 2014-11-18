@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap.min.css">
+<style>
+#drop {
+	margin:0 auto;
+	text-align:center;
+	font-size:500%;
+}
+.dragging {
+	background:lightgray;
+}
+.graph {
+	padding:1em; margin:1em;
+	border:1px solid gray;
+}
+</style>
+<div class='container-fluid'>
+<div id=drop>Drop WDI_Data.csv here</div>
+<div id='outputGraph'>
+	<div id='template' class='col-lg-4 col-md-6 col-sm-12 col-xs-12'>
+		<div class='graph'></div>
+	</div>
+</div>
+<select class='form-control' id='csel'><option value='-1'>All</option></select>
+<select class='form-control' id='isel'><option value='-1'>All</option></select>
+<pre id='output'></pre>
+</div>
+<script src="http://code.jquery.com/jquery-1.11.0.min.js"></script>
+<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.1/js/bootstrap.min.js"></script>
+<script src="http://d3js.org/d3.v3.min.js" charset="utf-8"></script>
+<script src='http://code.highcharts.com/highcharts.js'></script>
+<script src="main.js"></script>
