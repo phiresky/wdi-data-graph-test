@@ -1,69 +1,55 @@
-declare var d3:any;
-declare var $:any;
-declare var Highcharts:any;
-
+declare var d3:any,$:any,Highcharts:any;
+// source: ./main.ts
 var MIN_CORRELATION = 0.6;
 var MAX_CORRELATION = 0.99;
 var MIN_SAMPLE = 15;
-
-var Stat = {
-	mean: (x:number[]) => Stat.sum(x)/x.length,
-	sum: (x:number[]) => {
-		var s = 0;
-		for(var i=0;i<x.length;i++) {
-			s += x[i];
+function calcCorrelation(x:number[],y:number[]) {
+	var n = x.length;
+	var sum_x = 0, sum_y = 0, sum_xy = 0, sum_xx = 0, sum_yy = 0;
+	for(var i=0; i<n; ++i) {
+		sum_x += x[i];
+		sum_y += y[i];
+		sum_xy += x[i] * y[i];
+		sum_xx += x[i] * x[i];
+		sum_yy += y[i] * y[i];
+	}
+	var covar = n * sum_xy - sum_x * sum_y;
+	var var_x = n * sum_xx - sum_x * sum_x;
+	var var_y = n * sum_yy - sum_y * sum_y;
+	if(var_x == 0 || var_y == 0) return 0;
+	else return covar / Math.sqrt(var_x * var_y);
+}
+function removeNaN(data1,data2,additional?) {
+	var keep = new Array(data1.length);
+	for(var i=0;i<keep.length;i++)
+		keep[i] = !isNaN(data1[i])&&!isNaN(data2[i]);
+	var odata1 = [], odata2 = [], oadditional = [];
+	for(var inx = 0; inx < data1.length; inx++) {
+		if(keep[inx]) {
+			odata1.push(data1[inx]);
+			odata2.push(data2[inx]);
+			if(additional) oadditional.push(additional[inx]);
 		}
-		return s;
-	},
-	variance: (x:number[]) => {
-		var mean = Stat.mean(x);
-		return x.map(val => val - mean);
-	},
-	cov: (ivar,jvar) => {
-		var s = 0;
-		for(var i=0;i<ivar.length;i++) {
-			s += ivar[i]*jvar[i];
-		}
-		return s;
-	},
-	cor: (idata,jdata) => {
-		var ivar = Stat.variance(idata);
-		var jvar = Stat.variance(jdata); 
-
-		return Stat.cov(ivar,jvar) /
-			Math.sqrt(Stat.cov(ivar,ivar) * Stat.cov(jvar,jvar));
-	},
-	removeNaN: (data) => {
-		var keep = new Array(data[0].length);
-		for(var i=0;i<keep.length;i++) {
-			keep[i] = data.every(d => d[i]===d[i]);
-		}
-		for(var i=0;i<data.length;i++) {
-			data[i] = $.grep(data[i],(_,inx)=>keep[inx]);
-		}
-		return data;
-	},
-
-	square: (x:number[]) => x.map(a => a * a)
-};
+	}
+	return [odata1,odata2,oadditional];
+}
 function log(t) {
 	console.log(t);
 	$('#drop').text(t);
 }
 class Promise {
-	todo:any[] = [];
+	todo:{fn;str}[] = [];
 	then(str, fn) {
 		this.todo.push({fn:fn,str:str});
 		return this;
 	}
 	go() {
-		if(this.todo.length==0) {$("#drop").remove();return}
+		if(this.todo.length==0) {return $("#drop").remove();return}
 		var cur = this.todo.shift();
 		log(cur.str+"...");
 		setTimeout(()=>{cur.fn();this.go();},0);
 	}
 }
-
 class Arr {
 	arr: Float64Array;
 	constructor(public sx, public sy, inp?:number[][]) {
@@ -72,21 +58,12 @@ class Arr {
 			this.arr[y*this.sx+x] = inp[y][x];
 		}
 	}
-	get(x,y) {
-		return this.arr[y*this.sx+x];
-	}
-	set(x,y,val) {
-		this.arr[y*this.sx+x] = val;
-	}
-	getRow(y) {
-		return [].slice.call(this.arr.subarray(y*this.sx,(y+1)*this.sx));
-	}
+	get = (x,y) => this.arr[y*this.sx+x];
+	set = (x,y,val) => this.arr[y*this.sx+x] = val;
+	getRow(y) {return <any>this.arr.subarray(y*this.sx,(y+1)*this.sx);}
 }
-
 class Map2 {
-	names = [];
-	ids = [];
-	map = {};
+	names = []; ids = []; map = {};
 	remove(inx) {
 		this.names.splice(inx,1);
 		this.map = {};
@@ -94,7 +71,7 @@ class Map2 {
 	}
 	getAddInx(name,id) {
 		var inx = this.map[name];
-		if(inx!==undefined) return inx;
+		if(inx !== undefined) return inx;
 		else {
 			this.ids.push(id);
 			return this.map[name] = this.names.push(name)-1
@@ -102,117 +79,64 @@ class Map2 {
 	}
 }
 
-var countries,indicators,data,template;
+var countries:Map2,indicators:Map2,data:Arr,template;
 var correlation:{x;y;c}[];
+function parseData(e) {
+	var arr,countryCol,countryIDCol,indicatorCol,indicatorIDCol,dataCol;
+	var promise = new Promise();
+	promise.then("parsing csv", ()=>{
+		arr = d3.csv.parseRows((<any>e.target).result);
+	}).then("removing headers", ()=>{
+		var header = arr.shift(); // header
+		countryCol = header.indexOf("Country Name");
+		countryIDCol = header.indexOf("Country Code");
+		indicatorCol = header.indexOf("Indicator Name");
+		indicatorIDCol = header.indexOf("Indicator Code");
+		dataCol = header.indexOf("2010");
+	}).then("mapping, parsing floats", ()=>{
+		countries = new Map2();
+		indicators = new Map2();
+		var map = [];
+		arr.forEach(row => {
+			var country = countries.getAddInx(row[countryCol],row[countryIDCol]);
+			var indicator = indicators.getAddInx(row[indicatorCol],row[indicatorIDCol]);
+			map[indicator] = map[indicator] || [];
+			map[indicator][country] = parseFloat(row[dataCol]);
+		});
+		for(var i=0;i<map.length;i++) {
+			var country = map[i];
+			if(indicators.names.every((n,i)=>isNaN(country[i]))) {
+				log("Indicator has no data: "+indicators.names[i]);
+				indicators.remove(i);
+				map.splice(i,1);
+				i--;
+			}
+		}
+		data = new Arr(map[0].length, map.length, map);
+	}).then("correlating", ()=> {
+		correlation = [];
+		for(var i=0;i<data.sy;i++) {
+			for(var j=i+1; j < data.sy; j++) {
+				var datas = removeNaN(data.getRow(i),data.getRow(j));
+				var sample = datas[0].length;
+				var cor = calcCorrelation(datas[0],datas[1]);
+				if(Math.abs(cor)>=MIN_CORRELATION
+						&& Math.abs(cor)<=MAX_CORRELATION
+						&& sample>=MIN_SAMPLE)
+					correlation.push({x:i,y:j,s:sample,c:cor});
+			}
+		}
+	}).then("sorting",()=>{
+			correlation.sort((a,b) => Math.abs(a.c)-Math.abs(b.c));
+	}).then("done",()=>addCharts(24)).go();
+}
 function handleFileSelect(evt) {
-	evt.stopPropagation();
-	evt.preventDefault();
-	$('body').removeClass('dragging');
-	evt = evt.originalEvent;
-	var file = (evt.dataTransfer||evt.target).files[0];
+	evt.stopPropagation(); evt.preventDefault();
+	var file = (evt.originalEvent.dataTransfer||evt.target).files[0];
 	var reader = new FileReader();
 	log("loading file...");
-	reader.onload = function(e) {
-		var arr;
-		var countryCol,countryIDCol,indicatorCol,indicatorIDCol,dataCol;
-		var promise = new Promise();
-		promise.then("parsing csv", ()=> {
-			arr = d3.csv.parseRows((<any>e.target).result);
-		}).then("removing headers", ()=>{
-			var header = arr.shift(); // header
-			countryCol = header.indexOf("Country Name");
-			countryIDCol = header.indexOf("Country Code");
-			indicatorCol = header.indexOf("Indicator Name");
-			indicatorIDCol = header.indexOf("Indicator Code");
-			dataCol = header.indexOf("2010");
-		}).then("mapping, parsing floats", ()=>{
-			countries = new Map2();
-			indicators = new Map2();
-			var map = [];
-			arr.forEach(row => {
-				var country = countries.getAddInx(row[countryCol],row[countryIDCol]);
-				var indicator = indicators.getAddInx(row[indicatorCol],row[indicatorIDCol]);
-				map[indicator] = map[indicator] || [];
-				map[indicator][country] = parseFloat(row[dataCol]);
-			});
-			for(var i=0;i<map.length;i++) {
-				var country = map[i];
-				if(indicators.names.every((n,i)=>isNaN(country[i]))) {
-					log("Indicator has no data: "+indicators.names[i]);
-					indicators.remove(i);
-					map.splice(i,1);
-					i--;
-				}
-			}
-			data = new Arr(map[0].length, map.length, map);
-		}).then("adding options", ()=>{
-			var csel = $('#csel')[0];
-			countries.names.forEach((n,i) => csel.options.add(new Option(n,i)));
-			var isel = $('#isel')[0];
-			indicators.names.forEach((n,i) => isel.options.add(new Option(n,i)));
-		}).then("correlating", ()=> {
-			correlation = JSON.parse(localStorage.getItem("correlation")||false);
-			if(!correlation) {
-				correlation = [];
-				for(var i=0;i<data.sy;i++) {
-					promise.then("correlating "+i+"/"+data.sy, (i=>{
-						for(var j=i+1; j < data.sy; j++) {
-							var datas = [data.getRow(i),data.getRow(j)];
-							Stat.removeNaN(datas);
-							var sample = datas[0].length;
-							var cor = Stat.cor.apply(null,datas);
-							if(Math.abs(cor)>=MIN_CORRELATION
-									&& Math.abs(cor)<=MAX_CORRELATION
-									&& sample>=MIN_SAMPLE)
-								correlation.push({x:i,y:j,s:sample,c:cor});
-						}
-					}).bind(this,i));
-				}
-				promise.then("sorting",()=> {
-					correlation.sort((a,b) => Math.abs(a.c)-Math.abs(b.c));
-				});
-				promise.then("saving",()=> {
-					localStorage.setItem("correlation",JSON.stringify(correlation));
-				});
-			}
-			promise.then("done",()=> setTimeout("addCharts(24)",100));
-		}).go();
-	}
+	reader.onload = parseData;
 	reader.readAsText(file);
-}
-
-function output() {
-	var country = +$('#csel')[0].value;
-	var indicator = +$('#isel')[0].value;
-	var str = '';
-	if(country===-1) {
-		countries.names.forEach((name,country) => {
-			var d = data.get(country,indicator);
-			if(!isNaN(d)) str += name+": "+d+"\n";
-		});
-		var d = countries.names.map((name,country) => data.get(country,indicator));
-		$('#outputGraph').highcharts({
-			chart:{type:'column'},
-			title:{text:indicators.names[indicator]},
-			subtitle:{text:'foobar'},
-			xAxis: {
-				categories: countries.names.filter((n,i)=>!isNaN(d[i])),
-				title: 'by country',
-				labels: { rotation:-90}
-			},
-			yAxis: { title:'foo'},
-			tooltip: { formatter:function(){return this}},
-			plotOptions: { column:{showInLegend:false}},
-			series:[{data:d.filter(n=>!isNaN(n))}]
-		});
-	} else if(indicator === -1) {
-		indicators.names.forEach((name,indicator) => {
-			var d = data.get(country,indicator);
-			if(!isNaN(d)) str += name+": "+d+"\n";
-		});
-	} else str = data.get(country,indicator);
-	if(!str) str = 'no data'
-	$('#output').text(str);
 }
 
 function addCharts(count) {
@@ -222,64 +146,51 @@ function addCharts(count) {
 	var yname = indicators.names[info.y];// +'['+info.y+']';
 	var xid = indicators.ids[info.x].split(".");
 	var yid = indicators.ids[info.y].split(".");
-	//hack:only %
-	if(xname.indexOf('%')<0||yname.indexOf('%')<0) return addCharts(count);
-	//hack:no similar id
-	if(xid[0]==yid[0]&&xid[1]==yid[1]&&xid[2]==yid[2]) return addCharts(count);
+	if(location.search.indexOf('nohack')<0) {
+		//hack:only %
+		if(xname.indexOf('%')<0||yname.indexOf('%')<0) return addCharts(count);
+		//hack:no similar id
+		if(xid[0]==yid[0]&&xid[1]==yid[1]&&xid[2]==yid[2]) return addCharts(count);
+	}
 	if(Math.abs(info.x-info.y)<10) return addCharts(count);
 	var xdata = data.getRow(info.x);
 	var ydata = data.getRow(info.y);
-	var d = Stat.removeNaN([xdata,ydata,countries.names]);
+	var d = removeNaN(xdata,ydata,countries.names);
 	xdata = d[0]; ydata = d[1]; var cnames = d[2];
 	var container = template;
 	template = template.clone().appendTo("#outputGraph");
-	var re = /\s*\([^)]+\)/g; // remove parens
+	var re = x => x.replace(/\s*\([^)]+\)/g,""); // remove parens
 	container.children('.graph').highcharts({
-        chart: {type: 'scatter',zoomType: 'xy'},
-        title: {text: xname.replace(re,"")+ ' vs.<br>' + yname.replace(re,"")},
-        subtitle: {text: 'Source: WDI'},
-        xAxis: {
-            title: {enabled: true,text: xname},
-            startOnTick: true,
-            endOnTick: true,
-            showLastLabel: true
-        },
-        yAxis: {title: {text: yname}},
+		chart: {type: 'scatter', zoomType: 'xy'},
+		title: {text: re(xname)+ ' vs.<br>' + re(yname)},
+		xAxis: {title: {text: xname}},
+		yAxis: {title: {text: yname}},
 		legend: {enabled: false},
-        plotOptions: {
-            scatter: {
-				tooltip: {
-                    headerFormat: '',
-                    pointFormat: '<b>{point.name}</b><br>'+ xname+': {point.x}<br>'+yname+': {point.y}'
-                }
-            }
-        },
-        series: [{
+		plotOptions: { scatter: {
+			tooltip: {
+				headerFormat: '',
+				pointFormat: '<b>{point.name}</b><br>'+ xname+': {point.x}<br>'
+					+yname+': {point.y}'
+			}
+		}},
+		series: [{
 			data: cnames.map((name,country) => ({
-				name:name,
-				x:xdata[country],
-				y:ydata[country]
+				name:name,x:xdata[country],y:ydata[country]
 			}))
 		}]
 	});
 	container.css('visibility','visible').hide().fadeIn();
 	setTimeout(addCharts.bind(null,count-1),500);
 }
-
-$('#csel').change(output);
-$('#isel').change(output);
-$(function() {
-	template = $('#template').css('visibility','hidden');
-	$(window).scroll(() => {
-		if($(window).scrollTop() + $(window).height() >
-				$(document).height() - 200) addCharts(12);
+$(() => {
+	template = $('#template');
+	var win = $(window);
+	win.scroll(() => {
+		if(win.scrollTop() + win.height() > $(document).height() - 200) addCharts(12);
 	});
-	$('body')
-		.on('dragover',evt => {
-			evt.stopPropagation();
-			evt.preventDefault();
-			$('#drop').addClass('dragging');
-		})
-		.on('dragleave',evt => $('#drop').removeClass('dragging'))
-		.on('drop',handleFileSelect);
+	$('body').on('dragover',evt => {
+		evt.stopPropagation(); evt.preventDefault();
+		$('#drop').addClass('dragging');
+	}).on('dragleave',evt => $('#drop').removeClass('dragging'))
+	  .on('drop',handleFileSelect);
 });
