@@ -47,7 +47,7 @@ class Promise {
 		if(this.todo.length==0) {return $("#drop").remove();return}
 		var cur = this.todo.shift();
 		log(cur.str+"...");
-		setTimeout(()=>{cur.fn();this.go();},0);
+		setTimeout(()=>{cur.fn();this.go();},50);
 	}
 }
 class Arr {
